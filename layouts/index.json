@@ -1,0 +1,17 @@
+{{- $.Scratch.Set "posts" slice -}}
+{{- range $index, $post := where .Site.RegularPages "Type" "posts" -}}
+  {{- $tagList := slice -}}
+  {{- range $post.Params.tags -}}
+    {{- $tagList = $tagList | append . -}}
+  {{- end -}}
+  {{- $item := dict 
+    "id" (add $index 1)
+    "title" $post.Title
+    "date" ($post.Date.Format "2006-01-02")
+    "excerpt" ($post.Summary | plainify)
+    "link" $post.RelPermalink
+    "tags" $tagList
+  -}}
+  {{- $.Scratch.Add "posts" $item -}}
+{{- end -}}
+{{- $.Scratch.Get "posts" | jsonify -}}

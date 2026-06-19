@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>{{ .Title }} | {{ .Site.Title }}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;500;700&display=swap" rel="stylesheet">
+    {{ $style := resources.Get "css/style.css" | resources.Minify | resources.Fingerprint }}
+    <link rel="stylesheet" href="{{ $style.RelPermalink }}" integrity="{{ $style.Data.Integrity }}">
+    {{ $commonJS := resources.Get "js/common.js" | resources.Minify | resources.Fingerprint }}
+    <script src="{{ $commonJS.RelPermalink }}" integrity="{{ $commonJS.Data.Integrity }}" defer></script>
+</head>
+<body style="overflow-y: auto; height: auto; min-height: 100vh;">
+    <!-- Header (same as SPA) -->
+    <header class="site-header">
+        <div class="header-left">
+            <h1 class="site-title"><a href="/">{{ .Site.Title }}</a></h1>
+        </div>
+        <div class="header-right">
+            <a href="/" class="theme-toggle-btn" style="text-decoration:none;">
+                <span style="font-size:1.2rem;">🏠</span>
+                <span>首页</span>
+            </a>
+            <button class="theme-toggle-btn" onclick="toggleTheme()">
+                <span class="theme-icon" id="themeIcon">🌙</span>
+                <span>深色/浅色</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Content -->
+    <main style="max-width: 48rem; margin: 0 auto; padding: 3rem 2rem; min-height: calc(100vh - 80px - 60px);">
+        <h2 class="post-title-display">{{ .Title }}</h2>
+        <div class="post-meta-display">
+            <span>{{ .Date.Format "2006-01-02" }}</span>
+            {{ with .Params.tags }}
+            <span>•</span>
+            <span>{{ range $i, $tag := . }}{{ if $i }} {{ end }}#{{ $tag }}{{ end }}</span>
+            {{ end }}
+        </div>
+        <div class="post-body">
+            {{ .Content }}
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="site-footer">
+        &copy; {{ now.Year }} <a href="/">{{ .Site.Title }}</a>
+    </footer>
+
+</body>
+</html>

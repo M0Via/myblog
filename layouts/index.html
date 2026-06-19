@@ -1,0 +1,384 @@
+{{ $allPosts := where .Site.RegularPages "Type" "posts" }}
+{{ $totalPosts := len $allPosts }}
+{{ $tagCount := len .Site.Taxonomies.tags }}
+<!DOCTYPE html>
+<html data-theme="dark" lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>{{ .Site.Title }}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;500;700&display=swap" rel="stylesheet">
+    {{ $style := resources.Get "css/style.css" | resources.Minify | resources.Fingerprint }}
+    <link rel="stylesheet" href="{{ $style.RelPermalink }}" integrity="{{ $style.Data.Integrity }}">
+    {{ $commonJS := resources.Get "js/common.js" | resources.Minify | resources.Fingerprint }}
+    <script src="{{ $commonJS.RelPermalink }}" integrity="{{ $commonJS.Data.Integrity }}" defer></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="site-header">
+        <div class="header-left">
+            <h1 class="site-title"><a href="/">{{ .Site.Title }}</a></h1>
+            <div class="header-search">
+                <div class="search-input-wrapper">
+                    <input class="search-input" id="searchInput" placeholder="搜索文章……" type="text" autocomplete="off"/>
+                    <button class="search-btn-icon" onclick="handleSearch()" title="搜索">🔍</button>
+                </div>
+            </div>
+        </div>
+        <div class="header-right">
+            <button class="theme-toggle-btn" onclick="toggleTheme()">
+                <span class="theme-icon" id="themeIcon">🌙</span>
+                <span>深色/浅色</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Layout: Three Columns -->
+    <main class="main-layout">
+        <!-- Left Sidebar: Post List -->
+        <aside class="left-sidebar" id="leftSidebar">
+            <div class="left-sidebar-header">
+                文章列表 · {{ $totalPosts }} 篇
+                <button class="mobile-close-btn" onclick="toggleLeftSidebar()" title="关闭列表">✕</button>
+            </div>
+            <div class="search-result-count" id="searchResultCount"></div>
+            <div class="post-list custom-scrollbar" id="postList">
+                <!-- Rendered by JS -->
+            </div>
+        </aside>
+
+        <!-- Center: Main Content -->
+        <section class="main-content-area">
+            <button class="sidebar-toggle-btn sidebar-toggle-btn-left" onclick="toggleSidebar()" title="收起右侧栏">◀</button>
+            <button class="sidebar-toggle-btn sidebar-toggle-btn-right" onclick="toggleLeftSidebar()" title="收起左侧栏">▶</button>
+            <div class="content-scroll custom-scrollbar" id="mainContent">
+                <!-- Rendered by JS -->
+            </div>
+        </section>
+
+        <!-- Right Sidebar: Profile / Tags / Archive -->
+        <aside class="right-sidebar custom-scrollbar" id="rightSidebar">
+            <div class="sidebar-content">
+                <div class="sidebar-section">
+                    <p class="profile-bio">{{ .Site.Params.homeInfoParams.Content }}</p>
+                </div>
+
+                {{ if gt $tagCount 0 }}
+                <div class="sidebar-section">
+                    <h4 class="sidebar-section-title collapsible-header" onclick="toggleSection(this)">标签 <span class="collapse-arrow">▼</span></h4>
+                    <div class="collapsible-content">
+                        <div class="tag-cloud" id="tagCloud">
+                            {{ range $name, $taxonomy := .Site.Taxonomies.tags }}
+                            <a href="{{ "tags/" | relLangURL }}{{ $name | urlize }}/" class="tag-item" onclick="event.preventDefault(); filterByTag('{{ $name }}')"># {{ $name }}</a>
+                            {{ end }}
+                        </div>
+                    </div>
+                </div>
+                {{ end }}
+
+                <div class="sidebar-section">
+                    <h4 class="sidebar-section-title collapsible-header" onclick="toggleSection(this)">归档 <span class="collapse-arrow">▼</span></h4>
+                    <div class="collapsible-content">
+                        <ul class="archive-list" id="archiveList">
+                            {{ range (where .Site.RegularPages "Type" "posts").GroupByDate "2006" }}
+                            <li class="archive-year" data-year="{{ .Key }}" onclick="event.preventDefault(); filterByArchive('{{ .Key }}')">{{ .Key }} 年 ({{ len .Pages }})</li>
+                            {{ end }}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- Footer -->
+    <footer class="site-footer">
+        &copy; {{ now.Year }} <a href="/">{{ .Site.Title }}</a>
+    </footer>
+
+    <!-- SPA 应用逻辑 -->
+    <script>
+    // =========================================================
+    //  SPA 应用逻辑（支持容灾 + 按需加载）
+    // =========================================================
+
+    let posts = [];
+    let currentPostId = null;
+    let isSidebarOpen = true;
+    let isLeftSidebarOpen = true;
+    const contentCache = new Map();
+    const abortControllers = new Map();
+
+    // --- 初始化：异步拉取 /index.json ---
+    async function init() {
+        try {
+            const res = await fetch('/index.json');
+            if (!res.ok) throw new Error('Fetch index failed');
+            posts = await res.json();
+
+            renderPostList(posts);
+            if (posts.length > 0) {
+                await switchPost(posts[0].id);
+            } else {
+                document.getElementById('mainContent').innerHTML = '<div class="empty-state">还没有文章</div>';
+            }
+            updateSearchResultCount(posts.length);
+        } catch (e) {
+            console.warn('SPA 降级: 无法加载索引', e);
+            document.getElementById('mainContent').innerHTML = '<div class="empty-state">数据加载失败，请尝试<a href="/posts/">直接浏览</a></div>';
+        }
+    }
+
+    // --- 延迟加载搜索索引（仅用户触发搜索时才加载）---
+    let searchIndex = null;
+    async function ensureSearchIndex() {
+        if (!searchIndex) {
+            try {
+                const res = await fetch('/search.json');
+                searchIndex = await res.json();
+            } catch (e) {
+                console.warn('搜索索引加载失败', e);
+                searchIndex = [];
+            }
+        }
+        return searchIndex;
+    }
+
+    // --- Render Post List ---
+    function renderPostList(items) {
+        const listEl = document.getElementById('postList');
+        if (!items || items.length === 0) {
+            listEl.innerHTML = '<div class="empty-state" style="padding:2rem;opacity:0.3">无匹配结果</div>';
+            return;
+        }
+        listEl.innerHTML = items.map(post => `
+            <div onclick="switchPost(${post.id})" class="post-item ${post.id === currentPostId ? 'active-post' : ''}">
+                <div class="post-item-date">${post.date}</div>
+                <h3 class="post-item-title">${post.title}</h3>
+                <div class="post-item-excerpt">${post.excerpt || ''}</div>
+            </div>
+        `).join('');
+    }
+
+    // --- 切换文章（异步加载完整内容，带竞态取消）---
+    async function switchPost(id) {
+        const post = posts.find(p => p.id === id);
+        if (!post) return;
+
+        // Close left sidebar on mobile
+        if (window.innerWidth <= 768 && isLeftSidebarOpen) {
+            document.getElementById('leftSidebar').classList.add('closed');
+            document.querySelector('.main-layout').classList.add('layout-left-hidden');
+            isLeftSidebarOpen = false;
+        }
+
+        // Cancel previous pending request
+        if (abortControllers.has(currentPostId)) {
+            abortControllers.get(currentPostId).abort();
+            abortControllers.delete(currentPostId);
+        }
+
+        currentPostId = id;
+        const controller = new AbortController();
+        abortControllers.set(id, controller);
+
+        // Update highlight
+        renderPostList(posts);
+
+        // Show loading state
+        const contentEl = document.getElementById('mainContent');
+        contentEl.innerHTML = `
+            <div class="post-content-wrapper">
+                <h2 class="post-title-display">${post.title}</h2>
+                <div class="post-meta-display">
+                    <span>${post.date}</span>
+                    ${post.tags && post.tags.length ? '<span>•</span><span>' + post.tags.map(t => '#' + t).join(' ') + '</span>' : ''}
+                </div>
+                <div class="post-body" style="opacity:0.5;">载入中...</div>
+            </div>
+        `;
+
+        // Fetch or cache
+        if (!contentCache.has(id)) {
+            try {
+                const resp = await fetch(post.link, { signal: controller.signal });
+                if (!resp.ok) throw new Error('Fetch failed');
+                const html = await resp.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const body = doc.querySelector('.post-body');
+
+                if (body) {
+                    let contentHTML = body.innerHTML;
+                    // Fix relative image paths to absolute for cross-platform compatibility
+                    contentHTML = contentHTML.replace(/src="(?!http)(?!\/)([^"]+)"/g, 'src="/$1"');
+                    contentHTML = contentHTML.replace(/src='(?!http)(?!\/)([^']+)'/g, "src='/$1'");
+                    contentCache.set(id, contentHTML);
+                } else {
+                    contentCache.set(id, '<p>内容解析失败</p>');
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    return;
+                }
+                contentCache.set(id, '<p>网络波动，请刷新重试</p>');
+            } finally {
+                abortControllers.delete(id);
+            }
+        }
+
+        // Inject content
+        const bodyContainer = contentEl.querySelector('.post-body');
+        if (bodyContainer) {
+            bodyContainer.innerHTML = contentCache.get(id) || '<p>内容加载失败</p>';
+            bodyContainer.style.opacity = '1';
+        }
+        contentEl.scrollTop = 0;
+    }
+
+    // --- Toggle Right Sidebar ---
+    function toggleSidebar() {
+        const sidebar = document.getElementById('rightSidebar');
+        const layout = document.querySelector('.main-layout');
+        isSidebarOpen = !isSidebarOpen;
+        if (isSidebarOpen) {
+            sidebar.classList.remove('closed');
+            layout.classList.remove('layout-sidebar-hidden');
+        } else {
+            sidebar.classList.add('closed');
+            layout.classList.add('layout-sidebar-hidden');
+        }
+    }
+
+    // --- Toggle collapsible sidebar section (标签/归档) ---
+    function toggleSection(headerEl) {
+        const content = headerEl.nextElementSibling;
+        const arrow = headerEl.querySelector('.collapse-arrow');
+        if (content.classList.contains('collapsed')) {
+            content.classList.remove('collapsed');
+            content.style.maxHeight = content.scrollHeight + 'px';
+            if (arrow) arrow.textContent = '▼';
+        } else {
+            content.classList.add('collapsed');
+            content.style.maxHeight = '0';
+            if (arrow) arrow.textContent = '▶';
+        }
+    }
+
+    // --- Toggle Left Sidebar ---
+    function toggleLeftSidebar() {
+        const sidebar = document.getElementById('leftSidebar');
+        const layout = document.querySelector('.main-layout');
+        isLeftSidebarOpen = !isLeftSidebarOpen;
+        if (isLeftSidebarOpen) {
+            sidebar.classList.remove('closed');
+            layout.classList.remove('layout-left-hidden');
+        } else {
+            sidebar.classList.add('closed');
+            layout.classList.add('layout-left-hidden');
+        }
+    }
+
+    // --- Search（首次触发时异步加载 /search.json）---
+    let searchLoaded = false;
+
+    async function ensureSearch() {
+        if (!searchLoaded) {
+            await ensureSearchIndex();
+            searchLoaded = true;
+        }
+    }
+
+    function filterPosts(query) {
+        if (!query) return posts;
+        const q = query.toLowerCase();
+        // 先用本地 metadata 过滤
+        let filtered = posts.filter(p =>
+            p.title.toLowerCase().includes(q) ||
+            (p.excerpt && p.excerpt.toLowerCase().includes(q)) ||
+            (p.tags && p.tags.some(t => t.toLowerCase().includes(q)))
+        );
+        // 如果已加载搜索索引，追加全文匹配结果
+        if (searchIndex && searchIndex.length > 0) {
+            const searchHits = searchIndex.filter(s =>
+                s.content && s.content.toLowerCase().includes(q)
+            ).map(s => s.id);
+            // 合并去重
+            const existingIds = new Set(filtered.map(p => p.id));
+            searchHits.forEach(id => {
+                if (!existingIds.has(id)) {
+                    const match = posts.find(p => p.id === id);
+                    if (match) filtered.push(match);
+                }
+            });
+        }
+        return filtered;
+    }
+
+    function updateSearchResultCount(count) {
+        const el = document.getElementById('searchResultCount');
+        if (el) {
+            const query = document.getElementById('searchInput').value.trim();
+            el.textContent = query ? `找到 ${count} 篇` : '';
+        }
+    }
+
+    async function handleSearch() {
+        await ensureSearch();
+        const query = document.getElementById('searchInput').value.trim();
+        const filtered = filterPosts(query);
+        renderPostList(filtered);
+        updateSearchResultCount(filtered.length);
+
+        if (filtered.length > 0) {
+            if (!filtered.find(p => p.id === currentPostId)) {
+                await switchPost(filtered[0].id);
+            } else {
+                renderPostList(filtered);
+            }
+        } else {
+            document.getElementById('mainContent').innerHTML =
+                '<div class="empty-state">没有找到匹配的文章</div>';
+        }
+    }
+
+    // --- Filter by Tag ---
+    function filterByTag(tag) {
+        const filtered = posts.filter(p => p.tags && p.tags.some(t => t.toLowerCase() === tag.toLowerCase()));
+        document.getElementById('searchInput').value = '';
+        renderPostList(filtered);
+        updateSearchResultCount(filtered.length);
+        if (filtered.length > 0) {
+            switchPost(filtered[0].id);
+        } else {
+            document.getElementById('mainContent').innerHTML =
+                '<div class="empty-state">该标签下没有文章</div>';
+        }
+    }
+
+    // --- Filter by Archive Year ---
+    function filterByArchive(year) {
+        const filtered = posts.filter(p => p.date && p.date.startsWith(year));
+        document.getElementById('searchInput').value = '';
+        renderPostList(filtered);
+        updateSearchResultCount(filtered.length);
+        if (filtered.length > 0) {
+            switchPost(filtered[0].id);
+        } else {
+            document.getElementById('mainContent').innerHTML =
+                '<div class="empty-state">该年份没有文章</div>';
+        }
+    }
+
+    // --- Keyboard Event: Search realtime ---
+    document.addEventListener('DOMContentLoaded', function() {
+        init();
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+            searchInput.addEventListener('input', function() {
+                handleSearch();
+            });
+        }
+    });
+    </script>
+</body>
+</html>
