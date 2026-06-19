@@ -27,7 +27,6 @@ markup:
 outputs:
   home:
     - HTML
-    - RSS
     - JSON
 
 outputFormats:
