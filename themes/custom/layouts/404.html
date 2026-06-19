@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html data-theme="dark" lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>404 | {{ .Site.Title }}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;500;700&display=swap" rel="stylesheet">
+    {{ $style := resources.Get "css/style.css" | resources.Minify | resources.Fingerprint }}
+    <link rel="stylesheet" href="{{ $style.RelPermalink }}" integrity="{{ $style.Data.Integrity }}">
+</head>
+<body>
+    <main class="page-404">
+        <h1>404</h1>
+        <p>页面不存在</p>
+        <a href="/">返回首页</a>
+    </main>
+</body>
+</html>

@@ -1,0 +1,37 @@
+baseURL: '/'
+locale: zh-CN
+title: 我的博客
+theme: custom
+paginate: 10
+enableEmoji: true
+
+params:
+  homeInfoParams:
+    Content: "人痛苦，人困惑，人追问。"
+
+# 分类和标签
+taxonomies:
+  tag: tags
+  category: categories
+
+# Markdown 渲染
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+  highlight:
+    codeFences: true
+    style: dracula
+
+# 输出格式
+outputs:
+  home:
+    - HTML
+    - RSS
+    - JSON
+
+outputFormats:
+  JSON:
+    mediatype: application/json
+    isPlainText: true
+    notAlternative: true
